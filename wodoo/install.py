@@ -89,7 +89,11 @@ def install_symlink(addon_dir: Path, python: str) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
         wheel_name, dist_info_dirname, addon_name = _build_wheel(
-            addon_dir, tmppath, dist_info_only=True, local_version_identifier="symlink"
+            addon_dir,
+            tmppath,
+            include_src=False,
+            include_pth=False,
+            local_version_identifier="editable",
         )
         # see https://github.com/pypa/pip/issues/7678 for discussion about --upgrade
         subprocess.check_call(
@@ -104,6 +108,34 @@ def install_symlink(addon_dir: Path, python: str) -> None:
         record_path = purelib_path / dist_info_dirname / "RECORD"
         with record_path.open("a") as f:
             f.write("odoo/addons/{},,\n".format(addon_name))
+        # overwrite INSTALLER so it is not pip
+        with _replace_metadata_file(purelib_path, dist_info_dirname, "INSTALLER") as f:
+            f.write(INSTALLER)
+        # overwrite direct_url.json so it is not the temporary wheel,
+        # and it has the editable flag
+        with _replace_metadata_file(
+            purelib_path, dist_info_dirname, "direct_url.json"
+        ) as f:
+            json.dump(
+                {"url": addon_dir.resolve().as_uri(), "dir_info": {"editable": True}}, f
+            )
+
+
+def install_editable(addon_dir: Path, python: str) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir)
+        wheel_name, dist_info_dirname, addon_name = _build_wheel(
+            addon_dir,
+            tmppath,
+            include_src=False,
+            include_pth=True,
+            local_version_identifier="editable",
+        )
+        # see https://github.com/pypa/pip/issues/7678 for discussion about --upgrade
+        subprocess.check_call(
+            [python, "-m", "pip", "install", "--upgrade", tmppath / wheel_name]
+        )
+        purelib_path = _get_purelib_path(python)
         # overwrite INSTALLER so it is not pip
         with _replace_metadata_file(purelib_path, dist_info_dirname, "INSTALLER") as f:
             f.write(INSTALLER)

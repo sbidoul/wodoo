@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import textwrap
 from email.generator import Generator
 from email.message import Message
 from email.parser import HeaderParser
@@ -15,6 +16,21 @@ from wheel.wheelfile import WheelFile  # type: ignore
 from . import __version__
 
 TAG = "py3-none-any"  # TODO py2 for Odoo <= 11
+INJECTOR = textwrap.dedent(
+    """\
+        import os
+
+
+        def symlink_to(metadata_dir, src):
+            here = os.path.dirname(__file__)
+            dst = os.path.join(here, "odoo", "addons", os.path.basename(src))
+            if not os.path.islink(dst):
+                os.makedirs(os.path.join(here, "odoo", "addons"), exist_ok=True)
+                os.symlink(src, dst)
+                with open(os.path.join(here, metadata_dir, "RECORD"), "a") as f:
+                    f.write("odoo/addons/{},,\\n".format(os.path.basename(src)))
+    """
+)
 
 
 class UnsupportedOperation(NotImplementedError):
@@ -160,7 +176,8 @@ def _get_metadata(
 def _build_wheel(
     addon_dir: Path,
     wheel_directory: Path,
-    dist_info_only: bool = False,
+    include_src: bool = True,
+    include_pth: bool = False,
     local_version_identifier: Optional[str] = None,
 ) -> Tuple[str, str, str]:
     addon_name = _get_addon_name(addon_dir)
@@ -170,8 +187,10 @@ def _build_wheel(
     wheel_name = _get_wheel_name(metadata)
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
+        # always include metadata
         dist_info_dirname = _make_dist_info(metadata, tmppath)
-        if not dist_info_only:
+        if include_src:
+            assert not include_pth
             odoo_addon_path = tmppath / "odoo" / "addons"
             odoo_addon_path.mkdir(parents=True)
             odoo_addon_path = odoo_addon_path / addon_name
@@ -180,6 +199,20 @@ def _build_wheel(
             _ensure_absent(
                 [odoo_addon_path / "pyproject.toml", odoo_addon_path / "PKG-INFO"]
             )
+        if include_pth:
+            assert not include_src
+            injector_name = "{}__editable".format(metadata["Name"].replace("-", "_"))
+            with (tmppath / (injector_name + ".pth")).open("w") as f:
+                f.write(
+                    "import {injector_name}; {injector_name}."
+                    "symlink_to({dist_info_dirname!r}, {addon_dir!r})\n".format(
+                        injector_name=injector_name,
+                        dist_info_dirname=dist_info_dirname,
+                        addon_dir=str(addon_dir),
+                    )
+                )
+            with (tmppath / (injector_name + ".py")).open("w") as f:
+                f.write(INJECTOR)
         with WheelFile(wheel_directory / wheel_name, "w") as wf:
             wf.write_files(tmpdir)
     return wheel_name, dist_info_dirname, addon_name
@@ -191,6 +224,23 @@ def build_wheel(
     metadata_directory: Optional[str] = None,
 ) -> str:
     wheel_name, _, _ = _build_wheel(Path.cwd(), Path(wheel_directory))
+    return wheel_name
+
+
+def build_wheel_for_editable(
+    wheel_directory: str,
+    scheme: Dict[str, str],
+    config_settings: Optional[Dict[str, Any]] = None,
+    metadata_directory: Optional[str] = None,
+) -> str:
+    print("*********", scheme)
+    wheel_name, _, _ = _build_wheel(
+        Path.cwd(),
+        Path(wheel_directory),
+        include_src=False,
+        include_pth=True,
+        local_version_identifier="editable",
+    )
     return wheel_name
 
 

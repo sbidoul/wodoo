@@ -7,7 +7,7 @@ from pathlib import Path
 from . import __version__
 from .buildapi import _build_sdist, _build_wheel
 from .init import init
-from .install import install, install_symlink
+from .install import install, install_editable, install_symlink
 
 
 def main() -> None:
@@ -51,6 +51,12 @@ def main() -> None:
         "--symlink",
         action="store_true",
         help="Symlink the addon into site packages instead of copying it.",
+    )
+    parser_install.add_argument(
+        "-e",
+        "--editable",
+        action="store_true",
+        help="Install the addon in editable mode.",
     )
     parser_install.add_argument(
         "--python",
@@ -101,6 +107,8 @@ def main() -> None:
                 python = sys.executable
         if args.symlink:
             install_symlink(Path(addon_dir), python)
+        elif args.editable:
+            install_editable(Path(addon_dir), python)
         else:
             install(Path(addon_dir), python)
     elif args.subcmd == "build":
